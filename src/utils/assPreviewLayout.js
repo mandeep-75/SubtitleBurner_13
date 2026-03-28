@@ -51,12 +51,10 @@ export function getAssOverlayWrapperStyle(style, frame) {
     }
   }
   if (style.position === 'top') {
-    const fontSc = Math.round((style.font_size * playResY) / REF_PLAY_Y)
-    const topPx = (marginV + fontSc / 2) * vScale
     return {
       ...base,
       left: '50%',
-      top: topPx,
+      top: marginV * vScale,
       transform: 'translateX(-50%)'
     }
   }

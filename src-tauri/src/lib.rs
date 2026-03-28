@@ -252,10 +252,11 @@ async fn generate_subtitle_file(
 }
 
 fn calculate_margin_v(position: &str, y_offset: i32, play_res_y: i32) -> i32 {
+    let offset = y_offset.max(10);
     match position {
-        "top" => y_offset.max(10),
+        "top" => offset,
         "center" => play_res_y / 2,
-        _ => y_offset.max(10),
+        _ => offset, // bottom: margin_v in ASS is distance from bottom
     }
 }
 
@@ -460,17 +461,23 @@ async fn export_video(
     // Generate ASS content with styling for subtitle burning
     let ass_content = build_ass_content(&processed_subtitles, &style, out_w, out_h)?;
     
-    let ass_path = output_path.replace(".mp4", ".ass").replace(".mkv", ".ass");
+    // Use app's temp directory for temporary ASS file
+    let ass_filename = format!("subtitle_burner_{}.ass", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0));
+    let ass_path = std::env::temp_dir().join(ass_filename);
+    let ass_path_str = ass_path.to_string_lossy().to_string();
     tokio::fs::write(&ass_path, &ass_content)
         .await
         .map_err(|e| format!("Failed to write ASS file: {}", e))?;
     
-    log::info!("Generated ASS file at: {}", ass_path);
+    log::info!("Generated ASS file at: {}", ass_path_str);
     
     // Use ASS filter for styled subtitles
     let filter = format!(
         "crop=trunc(iw/2)*2:trunc(ih/2)*2,ass='{}'",
-        ass_path.replace('\'', "'\\''")
+        ass_path_str.replace('\'', "'\\''")
     );
     
     log::info!("Filter chain: {}", filter);
@@ -583,11 +590,16 @@ fn build_ass_content(
     let margin_v = calculate_margin_v(&style.position, scaled.y_offset, play_h);
     let cx = play_res_w / 2;
     
-    // Calculate wrap based on video width minus margins (40px on each side)
+    // Horizontal margins - keep text within screen bounds
     let horizontal_margin = 40u32;
-    let usable_width = play_res_w.saturating_sub(horizontal_margin * 2);
-    // Rough estimate: ~1 char per 20 pixels at 1080p, scale to actual resolution
-    let chars_per_line = ((usable_width as f64) * 40.0 / 1920.0).max(20.0) as usize;
+    let margin_l = horizontal_margin;
+    let margin_r = horizontal_margin;
+    
+    // Calculate max chars per line based on video width and font size
+    // Use font size to estimate: roughly font_size * 0.6 = avg char width
+    let font_width_estimate = (scaled.font_size as f64) * 0.6;
+    let usable_width = (play_res_w as f64) - (horizontal_margin as f64) * 2.0;
+    let chars_per_line = ((usable_width / font_width_estimate) as usize).max(20).min(60);
 
     // Get style values with defaults
     let bg_color = style.background_color.clone().unwrap_or_else(|| "#00000080".to_string());
@@ -609,40 +621,51 @@ fn build_ass_content(
     ass_content.push_str("[V4+ Styles]\n");
     ass_content.push_str("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n");
     
-    let primary_color = color_to_ass(&style.font_color);
-    let outline_color = color_to_ass(&border_col);
-    let back_color = color_to_ass_with_alpha(&bg_color);
+    let shadow_offset_x = scaled.shadow_offset_x.unwrap_or(0);
+    let shadow_offset_y = scaled.shadow_offset_y.unwrap_or(0);
+    let shadow_blur = scaled.shadow_blur.unwrap_or(0);
+    let border_width_scaled = scaled.border_width.unwrap_or(0);
     
-    let alignment = calculate_ass_alignment(&style.position, &align);
+    let outline = border_width_scaled.max(0);
+    let shadow_distance = shadow_offset_x.abs().max(shadow_offset_y.abs()) as u32;
+    let shadow = if shadow_blur > 0 || shadow_distance > 0 {
+        shadow_blur + shadow_distance
+    } else {
+        0
+    };
     
-    let border_style = if bg_color.len() >= 7 && bg_color != "#00000000" {
+    let border_style = if shadow > 0 && bg_color.len() >= 7 && bg_color != "#00000000" {
         3
     } else {
         1
     };
     
-    let shadow_offset_x = scaled.shadow_offset_x.unwrap_or(2);
-    let shadow_offset_y = scaled.shadow_offset_y.unwrap_or(2);
-    let shadow_blur = scaled.shadow_blur.unwrap_or(4);
-    let border_width_scaled = scaled.border_width.unwrap_or(2);
-    
-    let outline = if border_width_scaled > 0 {
-        border_width_scaled
+    let primary_color = color_to_ass(&style.font_color);
+    let outline_color = if border_width_scaled > 0 {
+        color_to_ass(&border_col)
     } else {
-        1
+        "00000000".to_string()
     };
-    let shadow_distance = shadow_offset_x.abs().max(shadow_offset_y.abs()) as u32;
-    let shadow = if shadow_blur > 0 {
-        shadow_blur + shadow_distance
+    let back_color = if shadow > 0 {
+        color_to_ass_with_alpha(&bg_color)
     } else {
-        shadow_distance
+        "00000000".to_string()
     };
     
+    // Set alignment based on position: 2=bottom center, 5=center, 8=top center
+    let alignment = match style.position.as_str() {
+        "top" => 8,
+        "center" => 5,
+        _ => 2, // bottom
+    };
+    
+    let secondary_color = "00000000";
     ass_content.push_str(&format!(
-        "Style: Default,{},{},&H{},&H000000,&H{},&H{},{},{},{},0,100,100,{},0,0,{},{},{},{},20,20,{},1\n\n",
+        "Style: Default,{},{},&H{},&H{},&H{},&H{},{},{},{},0,100,100,{},0,0,{},{},{},{},{},{},{},1\n\n",
         scaled.font_family,
         scaled.font_size,
         primary_color,
+        secondary_color,
         outline_color,
         back_color,
         if bold_val { -1 } else { 0 },
@@ -653,6 +676,8 @@ fn build_ass_content(
         outline,
         shadow,
         alignment,
+        margin_l,
+        margin_r,
         margin_v
     ));
     
@@ -664,21 +689,28 @@ fn build_ass_content(
         let end = format_ass_time(sub.end_time);
         let text = wrap_text_for_ass(&escape_ass_user_text(&sub.text), chars_per_line);
         
-        let positioned_text = match style.position.as_str() {
-            "top" => format!(
-                "{{\\pos({},{})}}{}",
-                cx,
-                margin_v + scaled.font_size as i32 / 2,
-                text
-            ),
-            "center" => format!("{{\\pos({},{})}}{}", cx, play_res_h / 2, text),
-            _ => format!("{{\\pos({},{})}}{}", cx, play_h - margin_v, text),
+        // For \pos: top uses y_offset, bottom uses (play_h - y_offset), center uses play_h/2
+        let y_pos: i32 = match style.position.as_str() {
+            "top" => margin_v,
+            "center" => play_h / 2,
+            _ => play_h - margin_v,  // bottom: distance from bottom
         };
         
+        // \an: 2=bottom center, 5=center, 8=top center
+        let an_value = match style.position.as_str() {
+            "top" => 8,
+            "center" => 5,
+            _ => 2,
+        };
+        
+        // Use \an for alignment - let style's MarginV handle vertical position
+        // \an2=bottom center, \an5=center, \an8=top center
+        let ass_override = format!("{{\\an{}}}", an_value);
+        let positioned_text = format!("{}{}", ass_override, text);
         let styled_text = apply_ass_inline_styles(&positioned_text, style);
         
-        // Use 0 margins since we're using \pos override
-        ass_content.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", start, end, styled_text));
+        // Use calculated margin_v for vertical positioning based on style.position
+        ass_content.push_str(&format!("Dialogue: 0,{},{},Default,,{},{},{},,{}\n", start, end, margin_l, margin_r, margin_v, styled_text));
     }
     
     Ok(ass_content)

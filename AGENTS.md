@@ -147,3 +147,62 @@ src-tauri/
 
 - VS Code with Tauri extension and rust-analyzer
 - Extensions: tauri-apps.tauri-vscode, rust-lang.rust-analyzer
+
+## ASS (Advanced SubStation Alpha) Format Reference
+
+### File Structure
+```
+[Script Info]
+Title: My Subtitles
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,100,100,0,0,1,2,2,2,2,20,20,20,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:04.00,Default,,0,0,50,,Hello World
+```
+
+### Alignment Values (\an)
+- 1 = Bottom Left, 2 = Bottom Center, 3 = Bottom Right
+- 4 = Middle Left, 5 = Middle Center, 6 = Middle Right  
+- 7 = Top Left, 8 = Top Center, 9 = Top Right
+
+### Positioning
+- Use `\an` override for alignment (e.g., `{\an2}` for bottom center)
+- Use MarginV in Style/Dialogue for vertical offset from edge
+- For top position: MarginV = distance from top
+- For bottom position: MarginV = distance from bottom
+- For center position: use `\an5` and MarginV = playResY/2
+
+### Color Format
+- ASS uses BGR format: `&H00BBGGRR`
+- Example: `&H00FFFFFF` = white, `&H000000FF` = red
+
+### Timing Format
+- H:MM:SS.cc (hours:minutes:seconds.centiseconds)
+- Example: `0:00:01.50` = 1.5 seconds
+
+### Text Override Tags
+- `{\anN}` - Alignment (N = 1-9)
+- `{\pos(x,y)}` - Position at x,y
+- `{\fad(in,out)}` - Fade in/out (milliseconds)
+- `{\fsN}` - Font size
+- `{\c&Hrrggbb&}` - Text color
+- `{\bordN}` - Border width
+- `{\shadN}` - Shadow depth
+- `{\i1}` / `{\i0}` - Italic on/off
+- `{\b1}` / `{\b0}` - Bold on/off
+- `{\u1}` / `{\u0}` - Underline on/off
+
+### Dialogue Line Format
+```
+Dialogue: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+```
+- MarginL/MarginR: horizontal margins (0 = use style default)
+- MarginV: vertical margin from appropriate edge based on alignment
