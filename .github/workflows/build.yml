@@ -39,6 +39,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev libssl-dev pkg-config libglib2.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -71,8 +76,26 @@ jobs:
         working-directory: src-tauri
         run: cargo build --release --target x86_64-pc-windows-gnu
 
-      - name: Upload artifact
+          - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: subtitle-burner-x86_64-pc-windows-gnu
           path: src-tauri/target/x86_64-pc-windows-gnu/release/subtitle-burner.exe
+
+  release:
+    needs: [build-macos, build-linux, build-windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
