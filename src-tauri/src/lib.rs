@@ -457,20 +457,20 @@ async fn export_video(
         subtitles
     };
 
-    // Generate SRT content for subtitle burning
-    let srt_content = generate_srt_content(&processed_subtitles);
+    // Generate ASS content with styling for subtitle burning
+    let ass_content = build_ass_content(&processed_subtitles, &style, out_w, out_h)?;
     
-    let srt_path = output_path.replace(".mp4", ".srt").replace(".mkv", ".srt");
-    tokio::fs::write(&srt_path, &srt_content)
+    let ass_path = output_path.replace(".mp4", ".ass").replace(".mkv", ".ass");
+    tokio::fs::write(&ass_path, &ass_content)
         .await
-        .map_err(|e| format!("Failed to write SRT file: {}", e))?;
+        .map_err(|e| format!("Failed to write ASS file: {}", e))?;
     
-    log::info!("Generated SRT file at: {}", srt_path);
+    log::info!("Generated ASS file at: {}", ass_path);
     
-    // Try subtitles filter first (requires libass), fall back to copy
+    // Use ASS filter for styled subtitles
     let filter = format!(
-        "crop=trunc(iw/2)*2:trunc(ih/2)*2,subtitles=filename='{}'",
-        srt_path.replace('\'', "'\\''")
+        "crop=trunc(iw/2)*2:trunc(ih/2)*2,ass='{}'",
+        ass_path.replace('\'', "'\\''")
     );
     
     log::info!("Filter chain: {}", filter);
@@ -505,49 +505,15 @@ async fn export_video(
     
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        
-        // If subtitles filter not available, embed subtitles without burning
-        if stderr.contains("No such filter") || stderr.contains("Filter not found") {
-            log::warn!("subtitles filter not available, embedding subtitles");
-            
-            // Embed SRT as text track (no burning, just muxing)
-            let mux_args = vec![
-                "-y".to_string(),
-                "-i".to_string(),
-                video_path.clone(),
-                "-i".to_string(),
-                srt_path.clone(),
-                "-c:v".to_string(),
-                "copy".to_string(),
-                "-c:a".to_string(),
-                "copy".to_string(),
-                "-c:s".to_string(),
-                "mov_text".to_string(),
-                "-metadata:s:s:0".to_string(),
-                format!("title={}", processed_subtitles.first().map(|s| &s.text[..1.min(s.text.len())]).unwrap_or("")),
-                output_path.clone(),
-            ];
-            
-            let mut mux_cmd = tokio::process::Command::new(&ffmpeg_path);
-            let mux_output = mux_cmd.args(&mux_args).output().await
-                .map_err(|e| format!("Failed to run ffmpeg mux: {}", e))?;
-            
-            if !mux_output.status.success() {
-                let mux_stderr = String::from_utf8_lossy(&mux_output.stderr);
-                log::error!("FFmpeg mux error: {}", mux_stderr);
-                return Err(format!("FFmpeg error: {}", mux_stderr));
-            }
-        } else {
-            log::error!("FFmpeg error: {}", stderr);
-            return Err(format!("FFmpeg error: {}", stderr));
-        }
+        log::error!("FFmpeg error: {}", stderr);
+        return Err(format!("FFmpeg error: {}", stderr));
     }
     
     // Clean up temp subtitle files
     if !subtitle_path.is_empty() {
         let _ = tokio::fs::remove_file(&subtitle_path).await;
     }
-    let _ = tokio::fs::remove_file(&srt_path).await;
+    let _ = tokio::fs::remove_file(&ass_path).await;
     
     log::info!("Video exported successfully to: {}", output_path);
     
@@ -1029,20 +995,20 @@ async fn generate_frame(
         text: subtitle_text,
         romanized: None,
     };
-    let srt_content = generate_srt_content(&[frame_sub]);
+    let ass_content = build_ass_content(&[frame_sub], &style, out_w, out_h)?;
 
     let uniq = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let srt_path = std::env::temp_dir().join(format!("subtitle_burner_frame_{}.srt", uniq));
-    tokio::fs::write(&srt_path, &srt_content)
+    let ass_path = std::env::temp_dir().join(format!("subtitle_burner_frame_{}.ass", uniq));
+    tokio::fs::write(&ass_path, &ass_content)
         .await
-        .map_err(|e| format!("Failed to write SRT file: {}", e))?;
+        .map_err(|e| format!("Failed to write ASS file: {}", e))?;
 
-    let escaped_path = srt_path.to_string_lossy().replace('\'', "'\\''");
+    let escaped_path = ass_path.to_string_lossy().replace('\'', "'\\''");
     let filter = format!(
-        "crop=trunc(iw/2)*2:trunc(ih/2)*2,subtitles=filename='{}'",
+        "crop=trunc(iw/2)*2:trunc(ih/2)*2,ass='{}'",
         escaped_path
     );
 
@@ -1076,7 +1042,7 @@ async fn generate_frame(
         return Err(format!("FFmpeg error: {}", stderr));
     }
 
-    let _ = tokio::fs::remove_file(&srt_path).await;
+    let _ = tokio::fs::remove_file(&ass_path).await;
 
     log::info!("Frame generated successfully: {}", output_path);
     Ok(output_path)
