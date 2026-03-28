@@ -66,6 +66,8 @@ jobs:
 
       - name: Create macOS app bundle
         if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+        env:
+          VERSION: ${GITHUB_REF#refs/tags/v}
         run: |
           mkdir -p bundle/macos
           APP_NAME="SubtitleBurner"
@@ -74,7 +76,16 @@ jobs:
           
           cp "src-tauri/target/${{ matrix.target }}/release/subtitle-burner" "bundle/macos/${APP_NAME}.app/Contents/MacOS/"
           
-          cat > "bundle/macos/${APP_NAME}.app/Contents/Info.plist" << 'EOF'
+          if [ -f "src-tauri/icons/icon.icns" ]; then
+            cp "src-tauri/icons/icon.icns" "bundle/macos/${APP_NAME}.app/Contents/Resources/"
+          fi
+          
+          VERSION_NUMBER=${GITHUB_REF#refs/tags/v}
+          if [ "$VERSION_NUMBER" = "$GITHUB_REF" ]; then
+            VERSION_NUMBER="0.0.0"
+          fi
+          
+          cat > "bundle/macos/${APP_NAME}.app/Contents/Info.plist" << EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -82,17 +93,19 @@ jobs:
             <key>CFBundleExecutable</key>
             <string>subtitle-burner</string>
             <key>CFBundleIdentifier</key>
-            <string>com.subtitleburner.app</string>
+            <string>com.subtitleburner.desktop</string>
             <key>CFBundleName</key>
             <string>SubtitleBurner</string>
             <key>CFBundlePackageType</key>
             <string>APPL</string>
             <key>CFBundleShortVersionString</key>
-            <string>1.0</string>
+            <string>${VERSION_NUMBER}</string>
             <key>CFBundleVersion</key>
-            <string>1</string>
+            <string>${GITHUB_RUN_NUMBER}</string>
             <key>LSMinimumSystemVersion</key>
-            <string>10.13</string>
+            <string>10.15</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
           </dict>
           </plist>
           EOF
@@ -100,7 +113,7 @@ jobs:
           cd bundle/macos
           tar -czf "../../../SubtitleBurner_macos_${{ matrix.target }}.tar.gz" "${APP_NAME}.app"
           
-          hdiutil create -volname SubtitleBurner -srcfolder "${APP_NAME}.app" -ov -format UDZO -fs HFS+ "../../../SubtitleBurner_macos_${{ matrix.target }}.dmg" || true
+          hdiutil create -volname SubtitleBurner -srcfolder "${APP_NAME}.app" -ov -format UDZO -fs HFS+ "../../../SubtitleBurner_macos_${{ matrix.target }}.dmg"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -245,6 +258,15 @@ jobs:
         with:
           path: artifacts/bundles
           pattern: SubtitleBurner_macos_*
+
+      - name: Debug - List downloaded artifacts
+        run: |
+          echo "=== Binaries ==="
+          ls -la artifacts/binaries/ || echo "No binaries directory"
+          find artifacts/binaries/ -type f 2>/dev/null || echo "No files in binaries"
+          echo "=== Bundles ==="
+          ls -la artifacts/bundles/ || echo "No bundles directory"
+          find artifacts/bundles/ -type f 2>/dev/null || echo "No files in bundles"
 
       - name: Prepare release assets
         run: |
