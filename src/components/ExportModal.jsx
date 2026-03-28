@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { save } from '@tauri-apps/plugin-dialog'
 
-function ExportModal({ videoPath, videoWidth, videoHeight, subtitles, style, transcribeSettings, onClose }) {
+function ExportModal({ videoPath, videoWidth, videoHeight, subtitles, style, onClose }) {
   const [format, setFormat] = useState('mp4')
   const [exporting, setExporting] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [error, setError] = useState(null)
 
   const handleExport = async () => {
     try {
@@ -20,28 +21,16 @@ function ExportModal({ videoPath, videoWidth, videoHeight, subtitles, style, tra
       if (!outputPath) return
 
       setExporting(true)
+      setError(null)
       setProgress(10)
-
-      const tempSubPath = outputPath + '.ass'
-
-      await invoke('generate_subtitle_file', {
-        subtitles,
-        style,
-        outputPath: tempSubPath,
-        settings: transcribeSettings,
-        videoWidth: videoWidth ?? null,
-        videoHeight: videoHeight ?? null
-      })
-
-      setProgress(40)
 
       await invoke('export_video', {
         videoPath,
-        subtitlePath: tempSubPath,
+        subtitlePath: '',
         outputPath,
         reencode: true,
         subtitles,
-        settings: transcribeSettings,
+        settings: null,
         style
       })
 
@@ -53,6 +42,7 @@ function ExportModal({ videoPath, videoWidth, videoHeight, subtitles, style, tra
       }, 500)
     } catch (error) {
       console.error('Export failed:', error)
+      setError(error.toString())
       setExporting(false)
     }
   }
@@ -72,7 +62,7 @@ function ExportModal({ videoPath, videoWidth, videoHeight, subtitles, style, tra
 
         <div className="modal-body">
           <p style={{ marginBottom: 16, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-            Output keeps the source resolution and aspect ratio (subtitles scaled to match). Video is cropped by at most one pixel on odd-sized dimensions so encoders stay compatible.
+            Export video with burned-in subtitles. This will create a new video file with your subtitles rendered directly on the video.
           </p>
 
           <div style={{ marginBottom: '16px' }}>
@@ -84,9 +74,22 @@ function ExportModal({ videoPath, videoWidth, videoHeight, subtitles, style, tra
               disabled={exporting}
             >
               <option value="mp4">MP4</option>
-              <option value="mkv">MKV</option>
+              <option value="mkv">MKV (recommended for subtitles)</option>
             </select>
           </div>
+
+          {error && (
+            <div style={{ 
+              padding: '12px', 
+              background: 'rgba(239, 68, 68, 0.1)', 
+              borderRadius: '8px',
+              color: '#ef4444',
+              fontSize: 13,
+              marginBottom: '16px'
+            }}>
+              Error: {error}
+            </div>
+          )}
 
           {exporting && (
             <div className="progress-indicator">
@@ -94,9 +97,10 @@ function ExportModal({ videoPath, videoWidth, videoHeight, subtitles, style, tra
                 <div className="progress" style={{ width: `${progress}%` }} />
               </div>
               <span className="progress-text">
-                {progress < 40 ? 'Generating subtitles...' :
-                  progress < 100 ? 'Burning subtitles into video...' :
-                    'Complete!'}
+                {progress < 30 ? 'Preparing...' :
+                  progress < 80 ? 'Burning subtitles into video...' :
+                    progress < 100 ? 'Finalizing...' :
+                      'Complete!'}
               </span>
             </div>
           )}
@@ -107,7 +111,7 @@ function ExportModal({ videoPath, videoWidth, videoHeight, subtitles, style, tra
             Cancel
           </button>
           <button className="btn btn-primary" onClick={handleExport} disabled={exporting}>
-            {exporting ? 'Exporting...' : 'Export'}
+            {exporting ? 'Exporting...' : 'Export Video'}
           </button>
         </div>
       </div>

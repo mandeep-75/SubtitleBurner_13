@@ -377,14 +377,15 @@ body {
   background: var(--color-bg-tertiary);
   border-top: 1px solid var(--color-border);
   flex-shrink: 0;
-  height: 280px;
+  height: 120px;
   overflow-y: auto;
 }
 
 .styling-panel-content {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: var(--spacing-xs);
+  display: flex;
+  gap: var(--spacing-md);
+  align-items: flex-start;
+  flex-wrap: wrap;
 }
 
 .styling-section {

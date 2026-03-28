@@ -14,24 +14,18 @@ import { useStyling } from './hooks/useStyling'
 function App() {
   const [showExport, setShowExport] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
-  const [transcribeProgress, setTranscribeProgress] = useState(0)
-  const [transcribeSettings, setTranscribeSettings] = useState({
-    whisperModel: 'tiny',
-    maxWordsPerLine: 5,
-    autoRomanize: false,
-    romanizationScheme: 'iast'
-  })
+  const [whisperModel, setWhisperModel] = useState('tiny')
 
   const {
     subtitles,
+    setSubtitles,
     selectedSubtitle,
     setSelectedSubtitle,
     updateSubtitle,
     addSubtitle,
     deleteSubtitle,
     importSubtitles,
-    exportSRT,
-    setSubtitles
+    exportSRT
   } = useSubtitles()
 
   const {
@@ -71,7 +65,7 @@ function App() {
       multiple: false,
       filters: [{
         name: 'Subtitle',
-        extensions: ['srt', 'vtt', 'ass', 'ssa', 'txt']
+        extensions: ['srt']
       }]
     })
     if (result) {
@@ -79,28 +73,27 @@ function App() {
     }
   }, [importSubtitles])
 
-  const handleTranscribeComplete = useCallback(async (result) => {
-    setSubtitles(result.subtitles)
-    setTranscribing(false)
-  }, [setSubtitles])
-
-  const handleTranscribe = useCallback(async (settings) => {
-    if (!videoInfo?.path) return
+  const handleTranscribe = useCallback(async () => {
+    if (!videoInfo?.path || transcribing) return
     
     setTranscribing(true)
-    setTranscribeProgress(0)
-    
     try {
-      const result = await invoke('transcribe_audio', { 
+      const result = await invoke('transcribe_audio', {
         videoPath: videoInfo.path,
-        settings: settings || transcribeSettings
+        settings: { 
+          whisperModel,
+          maxWordsPerLine: 1,
+          autoRomanize: false,
+          romanizationScheme: 'iast'
+        }
       })
-      handleTranscribeComplete(result)
+      setSubtitles(result.subtitles)
     } catch (e) {
       console.error('Transcription error:', e)
+    } finally {
       setTranscribing(false)
     }
-  }, [videoInfo, transcribeSettings, handleTranscribeComplete])
+  }, [videoInfo, whisperModel, setSubtitles, transcribing])
 
   const handleExport = useCallback(async () => {
     if (!videoInfo?.path || subtitles.length === 0) return
@@ -112,8 +105,6 @@ function App() {
     exportSRT(videoInfo.path.replace(/\.[^/.]+$/, '') + '.srt')
   }, [videoInfo, subtitles, exportSRT])
 
-
-
   return (
     <div className="app">
       <Header />
@@ -122,8 +113,8 @@ function App() {
         onImportSubtitle={handleImportSubtitle}
         onTranscribe={handleTranscribe}
         onExport={handleExport}
-        transcribeSettings={transcribeSettings}
-        onTranscribeSettingsChange={setTranscribeSettings}
+        whisperModel={whisperModel}
+        onWhisperModelChange={setWhisperModel}
         hasVideo={!!videoInfo?.path}
         hasSubtitles={subtitles.length > 0}
         transcribing={transcribing}
@@ -154,7 +145,6 @@ function App() {
           onDelete={deleteSubtitle}
           onExportSRT={exportSRT}
           onSeek={seek}
-          currentTime={currentTime}
         />
       </div>
 
@@ -171,29 +161,9 @@ function App() {
           videoHeight={videoInfo?.height}
           subtitles={subtitles}
           style={style}
-          transcribeSettings={transcribeSettings}
           onClose={() => setShowExport(false)}
         />
       )}
-
-      {transcribing && (
-        <div className="modal-overlay">
-          <div className="modal">
-            <div className="modal-header">
-              <h3 className="modal-title">Transcribing...</h3>
-            </div>
-            <div className="modal-body">
-              <div className="progress-indicator">
-                <div className="progress-bar-container">
-                  <div className="progress" style={{ width: `${transcribeProgress}%` }} />
-                </div>
-                <span className="progress-text">Processing audio with Whisper...</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
     </div>
   )
 }

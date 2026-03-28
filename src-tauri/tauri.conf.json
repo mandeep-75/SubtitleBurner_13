@@ -5,7 +5,9 @@
   "identifier": "com.subtitleburner.desktop",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:5173"
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "withGlobalTauri": true,
@@ -35,9 +37,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "../ffmpeg"
-    ],
+    "resources": [],
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"

@@ -6,8 +6,7 @@ function SubtitleEditor({
   onAdd,
   onDelete,
   onExportSRT,
-  onSeek,
-  currentTime
+  onSeek
 }) {
   const formatTime = (seconds) => {
     const m = Math.floor(seconds / 60)

@@ -1,10 +1,5 @@
-/**
- * Matches lib.rs ASS export: PlayRes = native video size, scaled from 1080p reference.
- */
-
 const REF_PLAY_Y = 1080
 
-/** Same rules as `calculate_margin_v` in src-tauri/src/lib.rs (with PlayRes height). */
 export function calculateMarginV(position, yOffset, playResY) {
   const y = Number(yOffset) || 0
   const scaledOff = Math.round((y * playResY) / REF_PLAY_Y)
@@ -13,9 +8,6 @@ export function calculateMarginV(position, yOffset, playResY) {
   return Math.max(10, scaledOff)
 }
 
-/**
- * Largest rectangle with the video's aspect ratio that fits in the panel.
- */
 export function computeAssFitFrame(containerWidth, containerHeight, playResX, playResY) {
   const rx = playResX > 0 ? playResX : 1920
   const ry = playResY > 0 ? playResY : 1080
@@ -76,38 +68,26 @@ export function getAssOverlayWrapperStyle(style, frame) {
   }
 }
 
-/**
- * Typography scaled from 1080p reference to preview frame (same as Rust scaling chain).
- */
 export function getAssPreviewTextStyle(style, scale) {
   if (scale <= 0) return {}
-  const fs = style.font_size * scale
-  const pad = style.line_spacing * scale
-  const bw = style.border_width * scale
-  const br = style.border_radius * scale
-  const sx = style.shadow_offset_x * scale
-  const sy = style.shadow_offset_y * scale
-  const sb = style.shadow_blur * scale
+  
+  const fs = Math.round(style.font_size * scale)
+  const pad = Math.round((style.line_spacing || 10) * scale)
 
   return {
-    fontFamily: style.font_family,
+    fontFamily: style.font_family || 'Arial',
     fontSize: `${fs}px`,
     lineHeight: 1.2,
-    color: style.font_color,
-    backgroundColor: style.background_color,
-    textShadow:
-      sb > 0 || sx !== 0 || sy !== 0
-        ? `${sx}px ${sy}px ${sb}px ${style.shadow_color}`
-        : 'none',
-    border: bw > 0 ? `${bw}px solid ${style.border_color}` : 'none',
-    borderRadius: `${br}px`,
+    color: style.font_color || '#FFFFFF',
+    backgroundColor: style.background_color ? `${style.background_color}99` : 'rgba(0,0,0,0.7)',
     padding: `${pad}px`,
-    textAlign: style.alignment,
+    borderRadius: `${Math.round((style.border_radius || 4) * scale)}px`,
+    textAlign: style.alignment || 'center',
     fontWeight: style.bold ? 'bold' : 'normal',
     fontStyle: style.italic ? 'italic' : 'normal',
     textDecoration: style.underline ? 'underline' : 'none',
     whiteSpace: 'pre-wrap',
-    wordWrap: 'break-word',
+    wordBreak: 'break-word',
     boxSizing: 'border-box'
   }
 }

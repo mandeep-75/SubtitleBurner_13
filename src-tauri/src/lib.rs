@@ -45,25 +45,26 @@ pub struct Subtitle {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
 pub struct SubtitleStyle {
     pub font_family: String,
     pub font_size: u32,
     pub font_color: String,
-    pub background_color: String,
-    pub border_color: String,
-    pub border_width: u32,
-    pub border_radius: u32,
-    pub shadow_color: String,
-    pub shadow_offset_x: i32,
-    pub shadow_offset_y: i32,
-    pub shadow_blur: u32,
+    pub background_color: Option<String>,
+    pub border_color: Option<String>,
+    pub border_width: Option<u32>,
+    pub border_radius: Option<u32>,
+    pub shadow_color: Option<String>,
+    pub shadow_offset_x: Option<i32>,
+    pub shadow_offset_y: Option<i32>,
+    pub shadow_blur: Option<u32>,
     pub position: String,
     pub y_offset: i32,
-    pub line_spacing: u32,
-    pub alignment: String,
-    pub bold: bool,
-    pub italic: bool,
-    pub underline: bool,
+    pub line_spacing: Option<u32>,
+    pub alignment: Option<String>,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub underline: Option<bool>,
 }
 
 impl Default for SubtitleStyle {
@@ -72,21 +73,21 @@ impl Default for SubtitleStyle {
             font_family: "Arial".to_string(),
             font_size: 48,
             font_color: "#FFFFFF".to_string(),
-            background_color: "#00000080".to_string(),
-            border_color: "#000000".to_string(),
-            border_width: 2,
-            border_radius: 4,
-            shadow_color: "#000000".to_string(),
-            shadow_offset_x: 2,
-            shadow_offset_y: 2,
-            shadow_blur: 4,
+            background_color: Some("#00000080".to_string()),
+            border_color: Some("#000000".to_string()),
+            border_width: Some(2),
+            border_radius: Some(4),
+            shadow_color: Some("#000000".to_string()),
+            shadow_offset_x: Some(2),
+            shadow_offset_y: Some(2),
+            shadow_blur: Some(4),
             position: "bottom".to_string(),
             y_offset: 50,
-            line_spacing: 10,
-            alignment: "center".to_string(),
-            bold: false,
-            italic: false,
-            underline: false,
+            line_spacing: Some(10),
+            alignment: Some("center".to_string()),
+            bold: Some(false),
+            italic: Some(false),
+            underline: Some(false),
         }
     }
 }
@@ -267,12 +268,12 @@ fn scale_style_for_play_res(style: &SubtitleStyle, play_res_y: u32) -> SubtitleS
     SubtitleStyle {
         font_size: ((style.font_size as f64) * scale).round().max(1.0) as u32,
         y_offset: scale_i32(style.y_offset),
-        border_width: scale_u32(style.border_width),
-        border_radius: scale_u32(style.border_radius),
-        shadow_offset_x: scale_i32(style.shadow_offset_x),
-        shadow_offset_y: scale_i32(style.shadow_offset_y),
-        shadow_blur: scale_u32(style.shadow_blur),
-        line_spacing: scale_u32(style.line_spacing),
+        border_width: style.border_width.map(scale_u32),
+        border_radius: style.border_radius.map(scale_u32),
+        shadow_offset_x: style.shadow_offset_x.map(scale_i32),
+        shadow_offset_y: style.shadow_offset_y.map(scale_i32),
+        shadow_blur: style.shadow_blur.map(scale_u32),
+        line_spacing: style.line_spacing.map(scale_u32),
         ..style.clone()
     }
 }
@@ -371,14 +372,14 @@ fn normalize_subtitles_nonoverlap(subs: &[Subtitle]) -> Vec<Subtitle> {
 
 fn apply_ass_inline_styles(positioned_text: &str, style: &SubtitleStyle) -> String {
     let mut result = positioned_text.to_string();
-    if style.italic {
-        result = format!("{{\\i1}}{}{{\\i0}}", result);
+    if style.italic.unwrap_or(false) {
+        result = format!("{{\\i1}}{}{{|\\i0}}", result);
     }
-    if style.bold {
-        result = format!("{{\\b1}}{}{{\\b0}}", result);
+    if style.bold.unwrap_or(false) {
+        result = format!("{{\\b1}}{}{{|\\b0}}", result);
     }
-    if style.underline {
-        result = format!("{{\\u1}}{}{{\\u0}}", result);
+    if style.underline.unwrap_or(false) {
+        result = format!("{{\\u1}}{}{{|\\u0}}", result);
     }
     result
 }
@@ -456,35 +457,33 @@ async fn export_video(
         subtitles
     };
 
-    // Build ASS content with styling (non-overlapping cues applied inside)
-    let ass_content = build_ass_content(&processed_subtitles, &style, out_w, out_h)?;
+    // Generate SRT content for subtitle burning
+    let srt_content = generate_srt_content(&processed_subtitles);
     
-    let ass_path = output_path.replace(".mp4", ".ass").replace(".mkv", ".ass");
-    tokio::fs::write(&ass_path, &ass_content)
+    let srt_path = output_path.replace(".mp4", ".srt").replace(".mkv", ".srt");
+    tokio::fs::write(&srt_path, &srt_content)
         .await
-        .map_err(|e| format!("Failed to write ASS file: {}", e))?;
+        .map_err(|e| format!("Failed to write SRT file: {}", e))?;
     
-    log::info!("Generated ASS file at: {}", ass_path);
+    log::info!("Generated SRT file at: {}", srt_path);
     
-    // Crop to even WxH (matches PlayRes), then burn subs — no scale/pad to landscape.
-    let escaped_path = ass_path.replace('\'', "'\\''");
+    // Try subtitles filter first (requires libass), fall back to copy
     let filter = format!(
-        "crop=trunc(iw/2)*2:trunc(ih/2)*2,ass='{}'",
-        escaped_path
+        "crop=trunc(iw/2)*2:trunc(ih/2)*2,subtitles=filename='{}'",
+        srt_path.replace('\'', "'\\''")
     );
     
     log::info!("Filter chain: {}", filter);
     
-    let audio_arg = if reencode { "-c:a aac -b:a 192k" } else { "-c:a copy" };
     log::info!(
         "FFmpeg command: ffmpeg -i {} -vf {} -c:v libx264 -preset medium -crf 23 {} {}",
-        video_path, filter, audio_arg, output_path
+        video_path, filter, audio_codec, output_path
     );
     
     let args = vec![
         "-y".to_string(),
         "-i".to_string(),
-        video_path,
+        video_path.clone(),
         "-vf".to_string(),
         filter,
         "-c:v".to_string(),
@@ -506,13 +505,49 @@ async fn export_video(
     
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        log::error!("FFmpeg error: {}", stderr);
-        return Err(format!("FFmpeg error: {}", stderr));
+        
+        // If subtitles filter not available, embed subtitles without burning
+        if stderr.contains("No such filter") || stderr.contains("Filter not found") {
+            log::warn!("subtitles filter not available, embedding subtitles");
+            
+            // Embed SRT as text track (no burning, just muxing)
+            let mux_args = vec![
+                "-y".to_string(),
+                "-i".to_string(),
+                video_path.clone(),
+                "-i".to_string(),
+                srt_path.clone(),
+                "-c:v".to_string(),
+                "copy".to_string(),
+                "-c:a".to_string(),
+                "copy".to_string(),
+                "-c:s".to_string(),
+                "mov_text".to_string(),
+                "-metadata:s:s:0".to_string(),
+                format!("title={}", processed_subtitles.first().map(|s| &s.text[..1.min(s.text.len())]).unwrap_or("")),
+                output_path.clone(),
+            ];
+            
+            let mut mux_cmd = tokio::process::Command::new(&ffmpeg_path);
+            let mux_output = mux_cmd.args(&mux_args).output().await
+                .map_err(|e| format!("Failed to run ffmpeg mux: {}", e))?;
+            
+            if !mux_output.status.success() {
+                let mux_stderr = String::from_utf8_lossy(&mux_output.stderr);
+                log::error!("FFmpeg mux error: {}", mux_stderr);
+                return Err(format!("FFmpeg error: {}", mux_stderr));
+            }
+        } else {
+            log::error!("FFmpeg error: {}", stderr);
+            return Err(format!("FFmpeg error: {}", stderr));
+        }
     }
     
     // Clean up temp subtitle files
-    let _ = tokio::fs::remove_file(&subtitle_path).await;
-    let _ = tokio::fs::remove_file(&ass_path).await;
+    if !subtitle_path.is_empty() {
+        let _ = tokio::fs::remove_file(&subtitle_path).await;
+    }
+    let _ = tokio::fs::remove_file(&srt_path).await;
     
     log::info!("Video exported successfully to: {}", output_path);
     
@@ -522,11 +557,10 @@ async fn export_video(
 fn find_ffmpeg() -> String {
     log::info!("Searching for bundled ffmpeg...");
     
-    // Hard-coded path to project ffmpeg folder
-    let project_root = std::path::PathBuf::from("/Users/mandeep/development/sub");
+    // 1. Use current working directory as project root
+    let project_root = std::env::current_dir().unwrap_or_default();
     log::info!("Project root: {:?}", project_root);
     
-    // 1. Project root ffmpeg folder
     let paths_to_try = vec![
         project_root.join("ffmpeg").join("ffmpeg"),
         project_root.join("ffmpeg"),
@@ -553,7 +587,17 @@ fn find_ffmpeg() -> String {
         }
     }
     
-    // No fallback - fail hard
+    // 3. Try system ffmpeg in PATH
+    if let Ok(output) = std::process::Command::new("which").arg("ffmpeg").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                log::info!("Using system ffmpeg: {}", path);
+                return path;
+            }
+        }
+    }
+    
     panic!("Bundled ffmpeg not found! Please ensure ffmpeg binary is in the ffmpeg/ folder.");
 }
 
@@ -574,6 +618,15 @@ fn build_ass_content(
     let cx = play_res_w / 2;
     let wrap_chars = ((play_res_w as usize).saturating_mul(40) / 1920).max(20);
 
+    // Get style values with defaults
+    let bg_color = style.background_color.clone().unwrap_or_else(|| "#00000080".to_string());
+    let border_col = style.border_color.clone().unwrap_or_else(|| "#000000".to_string());
+    let align = style.alignment.clone().unwrap_or_else(|| "center".to_string());
+    let line_sp = style.line_spacing.unwrap_or(10);
+    let bold_val = style.bold.unwrap_or(false);
+    let italic_val = style.italic.unwrap_or(false);
+    let underline_val = style.underline.unwrap_or(false);
+
     let mut ass_content = String::new();
     
     ass_content.push_str("[Script Info]\n");
@@ -586,42 +639,45 @@ fn build_ass_content(
     ass_content.push_str("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n");
     
     let primary_color = color_to_ass(&style.font_color);
-    let outline_color = color_to_ass(&style.border_color);
-    let back_color = color_to_ass_with_alpha(&style.background_color);
+    let outline_color = color_to_ass(&border_col);
+    let back_color = color_to_ass_with_alpha(&bg_color);
     
-    let alignment = calculate_ass_alignment(&style.position, &style.alignment);
+    let alignment = calculate_ass_alignment(&style.position, &align);
     
-    let border_style = if style.background_color.len() >= 7 && style.background_color != "#00000000" {
+    let border_style = if bg_color.len() >= 7 && bg_color != "#00000000" {
         3
     } else {
         1
     };
     
-    let outline = if scaled.border_width > 0 {
-        scaled.border_width
+    let shadow_offset_x = scaled.shadow_offset_x.unwrap_or(2);
+    let shadow_offset_y = scaled.shadow_offset_y.unwrap_or(2);
+    let shadow_blur = scaled.shadow_blur.unwrap_or(4);
+    let border_width_scaled = scaled.border_width.unwrap_or(2);
+    
+    let outline = if border_width_scaled > 0 {
+        border_width_scaled
     } else {
         1
     };
-    let shadow_distance = scaled
-        .shadow_offset_x
-        .abs()
-        .max(scaled.shadow_offset_y.abs()) as u32;
-    let shadow = if scaled.shadow_blur > 0 {
-        scaled.shadow_blur + shadow_distance
+    let shadow_distance = shadow_offset_x.abs().max(shadow_offset_y.abs()) as u32;
+    let shadow = if shadow_blur > 0 {
+        shadow_blur + shadow_distance
     } else {
         shadow_distance
     };
     
     ass_content.push_str(&format!(
-        "Style: Default,{},{},&H{},&H000000,&H{},&H{},{},{},{},0,100,100,0,0,{},{},{},{},20,20,{},1\n\n",
+        "Style: Default,{},{},&H{},&H000000,&H{},&H{},{},{},{},0,100,100,{},0,0,{},{},{},{},20,20,{},1\n\n",
         scaled.font_family,
         scaled.font_size,
         primary_color,
         outline_color,
         back_color,
-        if style.bold { -1 } else { 0 },
-        if style.italic { -1 } else { 0 },
-        if style.underline { -1 } else { 0 },
+        if bold_val { -1 } else { 0 },
+        if italic_val { -1 } else { 0 },
+        if underline_val { -1 } else { 0 },
+        line_sp,
         border_style,
         outline,
         shadow,
@@ -703,17 +759,20 @@ fn get_model_path() -> PathBuf {
     model_dir
 }
 
-async fn download_model_if_needed(model_path: &PathBuf) -> Result<(), String> {
+async fn download_model_if_needed(model_path: &PathBuf, model_filename: &str) -> Result<(), String> {
     if model_path.exists() {
         return Ok(());
     }
     
-    let model_url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
+    let model_url = format!(
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}",
+        model_filename
+    );
     
-    log::info!("Downloading whisper model...");
+    log::info!("Downloading whisper model: {} -> {}", model_filename, model_url);
     
     let client = reqwest::Client::new();
-    let response = client.get(model_url).send().await.map_err(|e| format!("Download failed: {}", e))?;
+    let response = client.get(&model_url).send().await.map_err(|e| format!("Download failed: {}", e))?;
     
     let bytes = response.bytes().await.map_err(|e| format!("Failed to read response: {}", e))?;
     
@@ -744,7 +803,6 @@ fn split_subtitle_by_words(sub: &Subtitle, max_words: u32) -> Vec<Subtitle> {
     
     while word_index < words.len() {
         let entry_words: Vec<&str> = words[word_index..].iter().take(words_per_entry).cloned().collect();
-        let _word_count = entry_words.len() as f64;
         
         // Calculate time for this entry - divide proportionally
         let start_fraction = word_index as f64 / total_words;
@@ -805,7 +863,7 @@ async fn transcribe_audio(video_path: String, settings: Option<TranscribeSetting
     };
     let model_path = model_dir.join(model_filename);
     
-    download_model_if_needed(&model_path).await.map_err(|e| format!("Model download failed: {}", e))?;
+    download_model_if_needed(&model_path, model_filename).await.map_err(|e| format!("Model download failed: {}", e))?;
     
     let ctx = WhisperContext::new_with_params(model_path.to_str().unwrap(), Default::default())
         .map_err(|e| format!("Failed to load whisper model: {}", e))?;
@@ -875,6 +933,18 @@ async fn transcribe_audio(video_path: String, settings: Option<TranscribeSetting
     }
     
     Ok(TranscriptionResult { subtitles })
+}
+
+fn generate_srt_content(subtitles: &[Subtitle]) -> String {
+    let mut output = String::new();
+    
+    for (i, sub) in subtitles.iter().enumerate() {
+        output.push_str(&format!("{}\n", i + 1));
+        output.push_str(&format!("{} --> {}\n", format_srt_time(sub.start_time), format_srt_time(sub.end_time)));
+        output.push_str(&format!("{}\n\n", sub.text));
+    }
+    
+    output
 }
 
 fn parse_srt_time(time_str: &str) -> f64 {
@@ -959,20 +1029,20 @@ async fn generate_frame(
         text: subtitle_text,
         romanized: None,
     };
-    let ass_content = build_ass_content(&[frame_sub], &style, out_w, out_h)?;
+    let srt_content = generate_srt_content(&[frame_sub]);
 
     let uniq = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let ass_path = std::env::temp_dir().join(format!("subtitle_burner_frame_{}.ass", uniq));
-    tokio::fs::write(&ass_path, &ass_content)
+    let srt_path = std::env::temp_dir().join(format!("subtitle_burner_frame_{}.srt", uniq));
+    tokio::fs::write(&srt_path, &srt_content)
         .await
-        .map_err(|e| format!("Failed to write ASS file: {}", e))?;
+        .map_err(|e| format!("Failed to write SRT file: {}", e))?;
 
-    let escaped_path = ass_path.to_string_lossy().replace('\'', "'\\''");
+    let escaped_path = srt_path.to_string_lossy().replace('\'', "'\\''");
     let filter = format!(
-        "crop=trunc(iw/2)*2:trunc(ih/2)*2,ass='{}'",
+        "crop=trunc(iw/2)*2:trunc(ih/2)*2,subtitles=filename='{}'",
         escaped_path
     );
 
@@ -1006,7 +1076,7 @@ async fn generate_frame(
         return Err(format!("FFmpeg error: {}", stderr));
     }
 
-    let _ = tokio::fs::remove_file(&ass_path).await;
+    let _ = tokio::fs::remove_file(&srt_path).await;
 
     log::info!("Frame generated successfully: {}", output_path);
     Ok(output_path)
