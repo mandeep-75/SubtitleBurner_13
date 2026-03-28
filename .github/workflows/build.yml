@@ -261,6 +261,8 @@ jobs:
 
       - name: Build
         run: |
+          ls -la
+          ls -la src-tauri/
           cd src-tauri
           cargo build --release
 
@@ -307,11 +309,12 @@ jobs:
       - name: Prepare release assets
         run: |
           cd artifacts/binaries
-          mv subtitle-burner-aarch64-apple-darwin/subtitle-burner ../SubtitleBurner_macos_arm64_bin
-          mv subtitle-burner-x86_64-apple-darwin/subtitle-burner ../SubtitleBurner_macos_x86_64_bin
-          mv subtitle-burner-x86_64-pc-windows-gnu/subtitle-burner.exe ../SubtitleBurner_windows_x86_64.exe
-          mv subtitle-burner-x86_64-unknown-linux-gnu/subtitle-burner ../SubtitleBurner_linux_x86_64
+          mv subtitle-burner-aarch64-apple-darwin/subtitle-burner SubtitleBurner_macos_arm64
+          mv subtitle-burner-x86_64-apple-darwin/subtitle-burner SubtitleBurner_macos_x86_64
+          mv subtitle-burner-x86_64-pc-windows-gnu/subtitle-burner.exe SubtitleBurner_windows_x86_64.exe
+          mv subtitle-burner-x86_64-unknown-linux-gnu/subtitle-burner SubtitleBurner_linux_x86_64
           rm -rf subtitle-burner-*/
+          ls -la
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
