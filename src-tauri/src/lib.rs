@@ -582,7 +582,12 @@ fn build_ass_content(
     let play_h = play_res_h as i32;
     let margin_v = calculate_margin_v(&style.position, scaled.y_offset, play_h);
     let cx = play_res_w / 2;
-    let wrap_chars = ((play_res_w as usize).saturating_mul(40) / 1920).max(20);
+    
+    // Calculate wrap based on video width minus margins (40px on each side)
+    let horizontal_margin = 40u32;
+    let usable_width = play_res_w.saturating_sub(horizontal_margin * 2);
+    // Rough estimate: ~1 char per 20 pixels at 1080p, scale to actual resolution
+    let chars_per_line = ((usable_width as f64) * 40.0 / 1920.0).max(20.0) as usize;
 
     // Get style values with defaults
     let bg_color = style.background_color.clone().unwrap_or_else(|| "#00000080".to_string());
@@ -657,7 +662,7 @@ fn build_ass_content(
     for sub in &subtitles {
         let start = format_ass_time(sub.start_time);
         let end = format_ass_time(sub.end_time);
-        let text = wrap_text_for_ass(&escape_ass_user_text(&sub.text), wrap_chars);
+        let text = wrap_text_for_ass(&escape_ass_user_text(&sub.text), chars_per_line);
         
         let positioned_text = match style.position.as_str() {
             "top" => format!(
@@ -672,7 +677,8 @@ fn build_ass_content(
         
         let styled_text = apply_ass_inline_styles(&positioned_text, style);
         
-        ass_content.push_str(&format!("Dialogue: 0,{},{},Default,,20,20,0,,{}\n", start, end, styled_text));
+        // Use 0 margins since we're using \pos override
+        ass_content.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,0,,{}\n", start, end, styled_text));
     }
     
     Ok(ass_content)
