@@ -37,74 +37,30 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Build
-        run: |
-          cargo build --release --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }}
-
-      - name: Create macOS app bundle
-        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
-        run: |
-          mkdir -p bundle/macos
-          APP_NAME="SubtitleBurner"
-          mkdir -p "bundle/macos/${APP_NAME}.app/Contents/MacOS"
-          mkdir -p "bundle/macos/${APP_NAME}.app/Contents/Resources"
-          
-          cp "src-tauri/target/${{ matrix.target }}/release/subtitle-burner" "bundle/macos/${APP_NAME}.app/Contents/MacOS/"
-          
-          if [ -f "src-tauri/icons/icon.icns" ]; then
-            cp "src-tauri/icons/icon.icns" "bundle/macos/${APP_NAME}.app/Contents/Resources/"
-          fi
-          
-          VERSION_NUMBER=${GITHUB_REF#refs/tags/v}
-          if [ "$VERSION_NUMBER" = "$GITHUB_REF" ]; then
-            VERSION_NUMBER="0.0.0"
-          fi
-          
-          cat > "bundle/macos/${APP_NAME}.app/Contents/Info.plist" << EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleExecutable</key>
-            <string>subtitle-burner</string>
-            <key>CFBundleIdentifier</key>
-            <string>com.subtitleburner.desktop</string>
-            <key>CFBundleName</key>
-            <string>SubtitleBurner</string>
-            <key>CFBundlePackageType</key>
-            <string>APPL</string>
-            <key>CFBundleShortVersionString</key>
-            <string>${VERSION_NUMBER}</string>
-            <key>CFBundleVersion</key>
-            <string>${GITHUB_RUN_NUMBER}</string>
-            <key>LSMinimumSystemVersion</key>
-            <string>10.15</string>
-            <key>NSHighResolutionCapable</key>
-            <true/>
-          </dict>
-          </plist>
-          EOF
-          
-          cd bundle/macos
-          tar -czf "../../../SubtitleBurner_macos_${{ matrix.target }}.tar.gz" "${APP_NAME}.app"
-          
-          hdiutil create -volname SubtitleBurner -srcfolder "${APP_NAME}.app" -ov -format UDZO -fs HFS+ "../../../SubtitleBurner_macos_${{ matrix.target }}.dmg"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Install Node.js
+        uses: actions/setup-node@v4
         with:
-          name: subtitle-burner-${{ matrix.target }}
-          path: src-tauri/target/${{ matrix.target }}/release/subtitle-burner
-          retention-days: 5
+          node-version: '20'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build with Tauri
+        run: npm run tauri build -- --target ${{ matrix.target }} --bundles app,dmg
 
       - name: Upload macOS bundle
         if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: SubtitleBurner_macos_${{ matrix.target }}
-          path: |
-            SubtitleBurner_macos_${{ matrix.target }}.tar.gz
-            SubtitleBurner_macos_${{ matrix.target }}.dmg
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/
+          retention-days: 5
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: subtitle-burner-${{ matrix.target }}
+          path: src-tauri/target/${{ matrix.target }}/release/subtitle-burner
           retention-days: 5
 
   build-windows:
@@ -124,9 +80,24 @@ jobs:
       - name: Install mingw-w64
         run: brew install mingw-w64
 
-      - name: Build
-        run: |
-          cargo build --release --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-gnu
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build with Tauri
+        run: npm run tauri build -- --target x86_64-pc-windows-gnu --bundles msi,nsis
+
+      - name: Upload Windows bundle
+        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SubtitleBurner_windows
+          path: src-tauri/target/x86_64-pc-windows-gnu/release/bundle/
+          retention-days: 5
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -149,6 +120,11 @@ jobs:
         with:
           targets: x86_64-unknown-linux-gnu
 
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
@@ -157,11 +133,22 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            libappindicator3-dev
 
-      - name: Build
-        run: |
-          cargo build --release --manifest-path src-tauri/Cargo.toml --target x86_64-unknown-linux-gnu
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build with Tauri
+        run: npm run tauri build -- --bundles appimage
+
+      - name: Upload Linux bundle
+        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SubtitleBurner_linux
+          path: src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/
+          retention-days: 5
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -178,35 +165,21 @@ jobs:
       contents: write
 
     steps:
-      - name: Download binaries
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts/binaries
-          pattern: subtitle-burner-*
-
-      - name: Download macOS bundles
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts/bundles
-          pattern: SubtitleBurner_macos_*
-
-      - name: Prepare release assets
-        run: |
-          cd artifacts/binaries
-          mv subtitle-burner-aarch64-apple-darwin/subtitle-burner SubtitleBurner_macos_arm64
-          mv subtitle-burner-x86_64-apple-darwin/subtitle-burner SubtitleBurner_macos_x86_64
-          mv subtitle-burner-x86_64-pc-windows-gnu/subtitle-burner.exe SubtitleBurner_windows_x86_64.exe
-          mv subtitle-burner-x86_64-unknown-linux-gnu/subtitle-burner SubtitleBurner_linux_x86_64
-          rm -rf subtitle-burner-*/
-          ls -la
+          path: artifacts
+          merge-multiple: true
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/binaries/SubtitleBurner_*
-            artifacts/bundles/SubtitleBurner_macos_*
+            artifacts/**/*.dmg
+            artifacts/**/*.msi
+            artifacts/**/*.exe
+            artifacts/**/*.AppImage
+            artifacts/**/*.app
           generate_release_notes: true
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') }}
         env:
