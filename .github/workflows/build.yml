@@ -42,11 +42,16 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Install frontend dependencies
-        run: npm ci
+        run: pnpm install
 
       - name: Build with Tauri
-        run: npm run tauri build -- --target ${{ matrix.target }} --bundles app,dmg
+        run: pnpm run tauri build -- --target ${{ matrix.target }} --bundles app,dmg
 
       - name: Upload macOS bundle
         if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
@@ -85,11 +90,16 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Install frontend dependencies
-        run: npm ci
+        run: pnpm install
 
       - name: Build with Tauri
-        run: npm run tauri build -- --target x86_64-pc-windows-gnu --bundles msi,nsis
+        run: pnpm run tauri build -- --target x86_64-pc-windows-gnu --bundles msi,nsis
 
       - name: Upload Windows bundle
         if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
@@ -133,14 +143,18 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            patchelf \
-            libappindicator3-dev
+            patchelf
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: pnpm install
 
       - name: Build with Tauri
-        run: npm run tauri build -- --bundles appimage
+        run: pnpm run tauri build -- --bundles appimage
 
       - name: Upload Linux bundle
         if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
