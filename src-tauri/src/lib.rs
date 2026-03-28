@@ -160,8 +160,60 @@ async fn get_video_info(path: String) -> Result<VideoInfo, String> {
     })
 }
 
+/// Native video dimensions (even width/height for H.264-friendly frames).
+fn even_video_dimensions(width: u32, height: u32) -> (u32, u32) {
+    let w = width.saturating_sub(width % 2).max(2);
+    let h = height.saturating_sub(height % 2).max(2);
+    (w, h)
+}
+
+async fn ffprobe_video_dimensions(path: &str) -> Result<(u32, u32), String> {
+    let output = tokio::process::Command::new("ffprobe")
+        .args([
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
+            "-show_streams",
+            path,
+        ])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run ffprobe: {}", e))?;
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&output_str)
+        .map_err(|e| format!("Failed to parse ffprobe output: {}", e))?;
+
+    let video_stream = json["streams"].as_array().and_then(|streams| {
+        streams.iter().find(|s| s["codec_type"] == "video")
+    });
+
+    let (w, h) = if let Some(stream) = video_stream {
+        (
+            stream["width"].as_u64().unwrap_or(0) as u32,
+            stream["height"].as_u64().unwrap_or(0) as u32,
+        )
+    } else {
+        (0, 0)
+    };
+
+    if w == 0 || h == 0 {
+        return Err("Could not read video width/height".to_string());
+    }
+
+    Ok(even_video_dimensions(w, h))
+}
+
 #[tauri::command]
-async fn generate_subtitle_file(subtitles: Vec<Subtitle>, style: SubtitleStyle, output_path: String, settings: Option<TranscribeSettings>) -> Result<String, String> {
+async fn generate_subtitle_file(
+    subtitles: Vec<Subtitle>,
+    style: SubtitleStyle,
+    output_path: String,
+    settings: Option<TranscribeSettings>,
+    video_width: Option<u32>,
+    video_height: Option<u32>,
+) -> Result<String, String> {
     let settings = settings.unwrap_or_default();
     let max_words = settings.max_words_per_line;
     
@@ -175,99 +227,53 @@ async fn generate_subtitle_file(subtitles: Vec<Subtitle>, style: SubtitleStyle, 
     } else {
         subtitles
     };
-    
-    let mut ass_content = String::new();
-    
-    ass_content.push_str("[Script Info]\n");
-    ass_content.push_str("ScriptType: v4.00+\n");
-    ass_content.push_str("PlayResX: 1920\n");
-    ass_content.push_str("PlayResY: 1080\n");
-    ass_content.push_str(&format!("Title: SubtitleBurner Export\n"));
-    ass_content.push_str(&format!("ScaledBorderAndShadow: yes\n\n"));
-    
-    ass_content.push_str("[V4+ Styles]\n");
-    ass_content.push_str("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n");
-    
-    let primary_color = color_to_ass(&style.font_color);
-    let outline_color = color_to_ass(&style.border_color);
-    let back_color = color_to_ass_with_alpha(&style.background_color);
-    
-    // Calculate marginV based on position
-    let margin_v = calculate_margin_v(&style.position, style.y_offset);
-    
-    // Alignment: convert text alignment to ASS alignment
-    // ASS uses: 1=left, 2=center, 3=right for bottom-aligned
-    // For top: 7=left, 8=center, 9=right
-    // For center: 4=left, 5=center, 6=right
-    let alignment = calculate_ass_alignment(&style.position, &style.alignment);
-    
-    // For box styling, we use BorderStyle=3 (opaque box)
-    let border_style = if style.background_color.len() >= 7 && style.background_color != "#00000000" {
-        3 // Opaque box
-    } else {
-        1 // Outline only
+
+    let (pw, ph) = match (video_width, video_height) {
+        (Some(w), Some(h)) if w > 0 && h > 0 => even_video_dimensions(w, h),
+        _ => (1920, 1080),
     };
-    
-    // Use the larger of border_width or shadow_blur for outline
-    let outline = if style.border_width > 0 { style.border_width } else { 1 };
-    let shadow = style.shadow_blur;
-    
-    ass_content.push_str(&format!(
-        "Style: Default,{},{},&H{},&H000000,&H{},&H{},{},{},{},0,100,100,0,0,{},{},{},{},10,10,{},1\n\n",
-        style.font_family,
-        style.font_size,
-        primary_color,
-        outline_color,
-        back_color,
-        if style.bold { -1 } else { 0 },
-        if style.italic { -1 } else { 0 },
-        if style.underline { -1 } else { 0 },
-        border_style,
-        outline,
-        shadow,
-        alignment,
-        margin_v
-    ));
-    
-    ass_content.push_str("[Events]\n");
-    ass_content.push_str("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n");
-    
-    for sub in &processed_subtitles {
-        let start = format_time(sub.start_time);
-        let end = format_time(sub.end_time);
-        // Text is already split during transcription, just replace newlines for ASS format
-        let text = sub.text.replace("\n", "\\N");
-        
-        // Add italic/bold/underline tags if needed
-        let mut styled_text = text;
-        if style.italic {
-            styled_text = format!("{{\\i1}}{}{{//i1}}", styled_text);
-        }
-        if style.bold {
-            styled_text = format!("{{\\b1}}{}{{//b1}}", styled_text);
-        }
-        if style.underline {
-            styled_text = format!("{{\\u1}}{}{{//u1}}", styled_text);
-        }
-        
-        ass_content.push_str(&format!("Dialogue: 0,{},{},Default,,0,0,{},,{}\n", start, end, margin_v, styled_text));
-    }
+
+    let ass_content = build_ass_content(&processed_subtitles, &style, pw, ph)?;
     
     tokio::fs::write(&output_path, ass_content)
         .await
         .map_err(|e| format!("Failed to write subtitle file: {}", e))?;
     
-    log::info!("Generated ASS file at: {} with style: font={}, size={}, color={}, bg={}, position={}, marginV={}", 
-        output_path, style.font_family, style.font_size, primary_color, back_color, style.position, margin_v);
+    log::info!(
+        "Generated ASS file at: {} (font={}, size={}, position={})",
+        output_path,
+        style.font_family,
+        style.font_size,
+        style.position
+    );
     
     Ok(output_path)
 }
 
-fn calculate_margin_v(position: &str, y_offset: i32) -> i32 {
+fn calculate_margin_v(position: &str, y_offset: i32, play_res_y: i32) -> i32 {
     match position {
-        "top" => y_offset, // Distance from top edge
-        "center" => 0,    // Centered vertically
-        _ => y_offset,    // Bottom - distance from bottom edge
+        "top" => y_offset.max(10),
+        "center" => play_res_y / 2,
+        _ => y_offset.max(10),
+    }
+}
+
+/// Style in the UI is relative to a 1080p-tall reference; scale into native PlayRes.
+fn scale_style_for_play_res(style: &SubtitleStyle, play_res_y: u32) -> SubtitleStyle {
+    let scale = play_res_y as f64 / 1080.0;
+    let scale_u32 = |n: u32| ((n as f64) * scale).round().max(0.0) as u32;
+    let scale_i32 = |n: i32| ((n as f64) * scale).round() as i32;
+
+    SubtitleStyle {
+        font_size: ((style.font_size as f64) * scale).round().max(1.0) as u32,
+        y_offset: scale_i32(style.y_offset),
+        border_width: scale_u32(style.border_width),
+        border_radius: scale_u32(style.border_radius),
+        shadow_offset_x: scale_i32(style.shadow_offset_x),
+        shadow_offset_y: scale_i32(style.shadow_offset_y),
+        shadow_blur: scale_u32(style.shadow_blur),
+        line_spacing: scale_u32(style.line_spacing),
+        ..style.clone()
     }
 }
 
@@ -279,9 +285,9 @@ fn calculate_ass_alignment(position: &str, alignment: &str) -> i32 {
     };
     
     match position {
-        "top" => 7 + text_align,  // 7=left, 8=center, 9=right
-        "center" => 4 + text_align, // 4=left, 5=center, 6=right
-        _ => 1 + text_align, // 1=left, 2=center, 3=right (bottom)
+        "top" => 7 + text_align,  // 7=left, 8=center, 9=right - positions from top
+        "center" => 4 + text_align, // 4=left, 5=center, 6=right - center vertically
+        _ => 1 + text_align, // 1=left, 2=center, 3=right (bottom) - positions from bottom
     }
 }
 
@@ -318,12 +324,96 @@ fn color_to_ass(hex: &str) -> String {
     }
 }
 
-fn format_time(seconds: f64) -> String {
-    let hours = (seconds / 3600.0).floor() as u32;
-    let minutes = ((seconds % 3600.0) / 60.0).floor() as u32;
-    let secs = (seconds % 60.0).floor() as u32;
-    let millis = ((seconds % 1.0) * 1000.0).round() as u32;
-    format!("{}:{:02}:{:02}.{:03}", hours, minutes, secs, millis)
+/// ASS/SSA uses H:MM:SS.cs with **centiseconds** (2 digits). Milliseconds break parsing and
+/// stretch or merge cues so old lines never clear in libass/ffmpeg.
+fn format_ass_time(seconds: f64) -> String {
+    let total_cs = (seconds * 100.0).round().max(0.0) as u64;
+    let cs = (total_cs % 100) as u32;
+    let mut t = total_cs / 100;
+    let s = (t % 60) as u32;
+    t /= 60;
+    let m = (t % 60) as u32;
+    let h = (t / 60) as u32;
+    format!("{}:{:02}:{:02}.{:02}", h, m, s, cs)
+}
+
+/// Commas and backslashes in the Text field must be escaped or libass mis-parses Dialogue lines.
+fn escape_ass_user_text(s: &str) -> String {
+    s.replace('\\', "\\\\").replace(',', "\\,")
+}
+
+/// Clamp overlapping cues so only one line is active at a time (fixes stacked / "stuck" subtitles in libass).
+fn normalize_subtitles_nonoverlap(subs: &[Subtitle]) -> Vec<Subtitle> {
+    if subs.is_empty() {
+        return vec![];
+    }
+    let mut sorted: Vec<Subtitle> = subs.to_vec();
+    sorted.sort_by(|a, b| {
+        a.start_time
+            .partial_cmp(&b.start_time)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    // Slightly larger gap so rounding to ASS centiseconds never leaves overlapping active cues.
+    const GAP: f64 = 0.05;
+    for i in 0..sorted.len() {
+        if i + 1 < sorted.len() {
+            let next_start = sorted[i + 1].start_time;
+            if sorted[i].end_time > next_start - GAP {
+                sorted[i].end_time = (next_start - GAP).max(sorted[i].start_time + GAP);
+            }
+        }
+        if sorted[i].end_time <= sorted[i].start_time {
+            sorted[i].end_time = sorted[i].start_time + GAP;
+        }
+    }
+    sorted
+}
+
+fn apply_ass_inline_styles(positioned_text: &str, style: &SubtitleStyle) -> String {
+    let mut result = positioned_text.to_string();
+    if style.italic {
+        result = format!("{{\\i1}}{}{{\\i0}}", result);
+    }
+    if style.bold {
+        result = format!("{{\\b1}}{}{{\\b0}}", result);
+    }
+    if style.underline {
+        result = format!("{{\\u1}}{}{{\\u0}}", result);
+    }
+    result
+}
+
+fn wrap_text_for_ass(text: &str, max_chars_per_line: usize) -> String {
+    if text.contains("\\N") || text.contains('\n') {
+        return text.replace("\n", "\\N");
+    }
+    
+    let mut result = String::new();
+    let mut current_line = String::new();
+    
+    for word in text.split_whitespace() {
+        if current_line.is_empty() {
+            current_line.push_str(word);
+        } else if current_line.len() + 1 + word.len() <= max_chars_per_line {
+            current_line.push(' ');
+            current_line.push_str(word);
+        } else {
+            if !result.is_empty() {
+                result.push_str("\\N");
+            }
+            result.push_str(&current_line);
+            current_line = word.to_string();
+        }
+    }
+    
+    if !current_line.is_empty() {
+        if !result.is_empty() {
+            result.push_str("\\N");
+        }
+        result.push_str(&current_line);
+    }
+    
+    result
 }
 
 #[tauri::command]
@@ -331,41 +421,65 @@ async fn export_video(
     video_path: String,
     subtitle_path: String,
     output_path: String,
-    quality: String,
     reencode: bool,
+    subtitles: Vec<Subtitle>,
+    settings: Option<TranscribeSettings>,
+    style: SubtitleStyle,
 ) -> Result<String, String> {
     log::info!("Exporting video with subtitles from: {}", subtitle_path);
     
-    // Check subtitle file exists
-    if !std::path::Path::new(&subtitle_path).exists() {
-        return Err(format!("Subtitle file not found: {}", subtitle_path));
+    // Check video file exists
+    if !std::path::Path::new(&video_path).exists() {
+        return Err(format!("Video file not found: {}", video_path));
     }
     
-    let (width, height) = match quality.as_str() {
-        "720p" => ("1280", "720"),
-        "4k" => ("3840", "2160"),
-        _ => ("1920", "1080"),
-    };
+    // Find bundled ffmpeg or use system ffmpeg
+    let ffmpeg_path = find_ffmpeg();
+    log::info!("Using ffmpeg at: {}", ffmpeg_path);
+
+    let (out_w, out_h) = ffprobe_video_dimensions(&video_path).await?;
+    log::info!("Export at native resolution {}x{} (even dimensions for encoder)", out_w, out_h);
     
     let audio_codec = if reencode { "-c:a aac -b:a 192k" } else { "-c:a copy" };
     
-    // Properly escape subtitle path for ffmpeg subtitles filter
-    // Need to escape : as \: and \ as \\
-    let escaped_sub_path = subtitle_path
-        .replace('\\', "\\\\")
-        .replace(':', "\\:");
+    // Generate ASS file for burning with styling
+    let settings = settings.unwrap_or_default();
+    let max_words = settings.max_words_per_line;
     
-    log::info!("Escaped subtitle path: {}", escaped_sub_path);
+    let processed_subtitles = if max_words > 1 {
+        let mut result = Vec::new();
+        for sub in subtitles {
+            result.extend(split_subtitle_by_words(&sub, max_words));
+        }
+        result
+    } else {
+        subtitles
+    };
+
+    // Build ASS content with styling (non-overlapping cues applied inside)
+    let ass_content = build_ass_content(&processed_subtitles, &style, out_w, out_h)?;
     
+    let ass_path = output_path.replace(".mp4", ".ass").replace(".mkv", ".ass");
+    tokio::fs::write(&ass_path, &ass_content)
+        .await
+        .map_err(|e| format!("Failed to write ASS file: {}", e))?;
+    
+    log::info!("Generated ASS file at: {}", ass_path);
+    
+    // Crop to even WxH (matches PlayRes), then burn subs — no scale/pad to landscape.
+    let escaped_path = ass_path.replace('\'', "'\\''");
     let filter = format!(
-        "scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,subtitles='{}'",
-        width, height, width, height, escaped_sub_path
+        "crop=trunc(iw/2)*2:trunc(ih/2)*2,ass='{}'",
+        escaped_path
     );
     
-    // Log the full command for debugging (before args are constructed)
+    log::info!("Filter chain: {}", filter);
+    
     let audio_arg = if reencode { "-c:a aac -b:a 192k" } else { "-c:a copy" };
-    log::info!("FFmpeg command: ffmpeg -i {} -vf {} -c:v libx264 -preset medium -crf 23 {} -o {}",
-        video_path, filter, audio_arg, output_path);
+    log::info!(
+        "FFmpeg command: ffmpeg -i {} -vf {} -c:v libx264 -preset medium -crf 23 {} {}",
+        video_path, filter, audio_arg, output_path
+    );
     
     let args = vec![
         "-y".to_string(),
@@ -379,11 +493,13 @@ async fn export_video(
         "medium".to_string(),
         "-crf".to_string(),
         "23".to_string(),
+        "-pix_fmt".to_string(),
+        "yuv420p".to_string(),
     ];
     
-    let mut cmd = tokio::process::Command::new("ffmpeg");
+    let mut cmd = tokio::process::Command::new(&ffmpeg_path);
     cmd.args(&args).args(audio_codec.split_whitespace());
-    cmd.arg("-o").arg(&output_path);
+    cmd.arg(&output_path);
     
     let output = cmd.output().await
         .map_err(|e| format!("Failed to run ffmpeg: {}", e))?;
@@ -394,12 +510,150 @@ async fn export_video(
         return Err(format!("FFmpeg error: {}", stderr));
     }
     
-    // Clean up temp subtitle file
+    // Clean up temp subtitle files
     let _ = tokio::fs::remove_file(&subtitle_path).await;
+    let _ = tokio::fs::remove_file(&ass_path).await;
     
     log::info!("Video exported successfully to: {}", output_path);
     
     Ok(output_path)
+}
+
+fn find_ffmpeg() -> String {
+    log::info!("Searching for bundled ffmpeg...");
+    
+    // Hard-coded path to project ffmpeg folder
+    let project_root = std::path::PathBuf::from("/Users/mandeep/development/sub");
+    log::info!("Project root: {:?}", project_root);
+    
+    // 1. Project root ffmpeg folder
+    let paths_to_try = vec![
+        project_root.join("ffmpeg").join("ffmpeg"),
+        project_root.join("ffmpeg"),
+    ];
+    
+    for p in &paths_to_try {
+        log::info!("Checking: {:?}", p);
+        if p.exists() {
+            log::info!("Found bundled ffmpeg at: {:?}", p);
+            return p.to_string_lossy().to_string();
+        }
+    }
+    
+    // 2. Check in Resources folder (for macOS .app bundle)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(dir) = exe_path.parent() {
+            if let Some(parent) = dir.parent() {
+                let resources_ffmpeg = parent.join("Resources").join("ffmpeg").join("ffmpeg");
+                log::info!("Checking Resources: {:?}", resources_ffmpeg);
+                if resources_ffmpeg.exists() {
+                    return resources_ffmpeg.to_string_lossy().to_string();
+                }
+            }
+        }
+    }
+    
+    // No fallback - fail hard
+    panic!("Bundled ffmpeg not found! Please ensure ffmpeg binary is in the ffmpeg/ folder.");
+}
+
+fn build_ass_content(
+    subtitles: &[Subtitle],
+    style: &SubtitleStyle,
+    play_res_w: u32,
+    play_res_h: u32,
+) -> Result<String, String> {
+    if play_res_w < 2 || play_res_h < 2 {
+        return Err("Invalid PlayRes dimensions".to_string());
+    }
+
+    let subtitles = normalize_subtitles_nonoverlap(subtitles);
+    let scaled = scale_style_for_play_res(style, play_res_h);
+    let play_h = play_res_h as i32;
+    let margin_v = calculate_margin_v(&style.position, scaled.y_offset, play_h);
+    let cx = play_res_w / 2;
+    let wrap_chars = ((play_res_w as usize).saturating_mul(40) / 1920).max(20);
+
+    let mut ass_content = String::new();
+    
+    ass_content.push_str("[Script Info]\n");
+    ass_content.push_str("ScriptType: v4.00+\n");
+    ass_content.push_str(&format!("PlayResX: {}\n", play_res_w));
+    ass_content.push_str(&format!("PlayResY: {}\n", play_res_h));
+    ass_content.push_str("ScaledBorderAndShadow: yes\n\n");
+    
+    ass_content.push_str("[V4+ Styles]\n");
+    ass_content.push_str("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n");
+    
+    let primary_color = color_to_ass(&style.font_color);
+    let outline_color = color_to_ass(&style.border_color);
+    let back_color = color_to_ass_with_alpha(&style.background_color);
+    
+    let alignment = calculate_ass_alignment(&style.position, &style.alignment);
+    
+    let border_style = if style.background_color.len() >= 7 && style.background_color != "#00000000" {
+        3
+    } else {
+        1
+    };
+    
+    let outline = if scaled.border_width > 0 {
+        scaled.border_width
+    } else {
+        1
+    };
+    let shadow_distance = scaled
+        .shadow_offset_x
+        .abs()
+        .max(scaled.shadow_offset_y.abs()) as u32;
+    let shadow = if scaled.shadow_blur > 0 {
+        scaled.shadow_blur + shadow_distance
+    } else {
+        shadow_distance
+    };
+    
+    ass_content.push_str(&format!(
+        "Style: Default,{},{},&H{},&H000000,&H{},&H{},{},{},{},0,100,100,0,0,{},{},{},{},20,20,{},1\n\n",
+        scaled.font_family,
+        scaled.font_size,
+        primary_color,
+        outline_color,
+        back_color,
+        if style.bold { -1 } else { 0 },
+        if style.italic { -1 } else { 0 },
+        if style.underline { -1 } else { 0 },
+        border_style,
+        outline,
+        shadow,
+        alignment,
+        margin_v
+    ));
+    
+    ass_content.push_str("[Events]\n");
+    ass_content.push_str("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n");
+    
+    for sub in &subtitles {
+        let start = format_ass_time(sub.start_time);
+        let end = format_ass_time(sub.end_time);
+        let text = wrap_text_for_ass(&escape_ass_user_text(&sub.text), wrap_chars);
+        
+        let positioned_text = match style.position.as_str() {
+            "top" => format!(
+                "{{\\pos({},{})}}{}",
+                cx,
+                margin_v + scaled.font_size as i32 / 2,
+                text
+            ),
+            "center" => format!("{{\\pos({},{})}}{}", cx, play_res_h / 2, text),
+            _ => format!("{{\\pos({},{})}}{}", cx, play_h - margin_v, text),
+        };
+        
+        let styled_text = apply_ass_inline_styles(&positioned_text, style);
+        
+        ass_content.push_str(&format!("Dialogue: 0,{},{},Default,,20,20,0,,{}\n", start, end, styled_text));
+    }
+    
+    Ok(ass_content)
 }
 
 #[tauri::command]
@@ -672,6 +926,92 @@ fn format_srt_time(seconds: f64) -> String {
     format!("{:02}:{:02}:{:02},{:03}", hours, minutes, secs, millis)
 }
 
+#[tauri::command]
+async fn copy_file(from_path: String, to_path: String) -> Result<(), String> {
+    tokio::fs::copy(&from_path, &to_path)
+        .await
+        .map_err(|e| format!("Failed to copy file: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn generate_frame(
+    video_path: String,
+    timestamp: f64,
+    subtitle_text: String,
+    style: SubtitleStyle,
+    output_path: String,
+) -> Result<String, String> {
+    log::info!("Generating frame at {}s with subtitle: {}", timestamp, subtitle_text);
+
+    if !std::path::Path::new(&video_path).exists() {
+        return Err(format!("Video file not found: {}", video_path));
+    }
+
+    let ffmpeg_path = find_ffmpeg();
+
+    let (out_w, out_h) = ffprobe_video_dimensions(&video_path).await?;
+
+    let frame_sub = Subtitle {
+        id: "preview".to_string(),
+        start_time: 0.0,
+        end_time: 86400.0,
+        text: subtitle_text,
+        romanized: None,
+    };
+    let ass_content = build_ass_content(&[frame_sub], &style, out_w, out_h)?;
+
+    let uniq = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let ass_path = std::env::temp_dir().join(format!("subtitle_burner_frame_{}.ass", uniq));
+    tokio::fs::write(&ass_path, &ass_content)
+        .await
+        .map_err(|e| format!("Failed to write ASS file: {}", e))?;
+
+    let escaped_path = ass_path.to_string_lossy().replace('\'', "'\\''");
+    let filter = format!(
+        "crop=trunc(iw/2)*2:trunc(ih/2)*2,ass='{}'",
+        escaped_path
+    );
+
+    // Seek after -i so the frame matches the requested timestamp (keyframe-fast seek before -i is often wrong).
+    let args = vec![
+        "-y".to_string(),
+        "-i".to_string(),
+        video_path,
+        "-ss".to_string(),
+        timestamp.to_string(),
+        "-vf".to_string(),
+        filter,
+        "-vframes".to_string(),
+        "1".to_string(),
+        "-q:v".to_string(),
+        "2".to_string(),
+        output_path.clone(),
+    ];
+
+    let mut cmd = tokio::process::Command::new(&ffmpeg_path);
+    cmd.args(&args);
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run ffmpeg: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::error!("FFmpeg error: {}", stderr);
+        return Err(format!("FFmpeg error: {}", stderr));
+    }
+
+    let _ = tokio::fs::remove_file(&ass_path).await;
+
+    log::info!("Frame generated successfully: {}", output_path);
+    Ok(output_path)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -691,7 +1031,9 @@ pub fn run() {
             export_video,
             parse_srt,
             generate_srt,
-            transcribe_audio
+            transcribe_audio,
+            generate_frame,
+            copy_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

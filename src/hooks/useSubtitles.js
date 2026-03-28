@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { readTextFile } from '@tauri-apps/plugin-fs'
+import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 
 export function useSubtitles() {
   const [subtitles, setSubtitles] = useState([])
@@ -42,10 +42,14 @@ export function useSubtitles() {
     }
   }, [selectedSubtitle])
 
-  const exportSRT = useCallback(async (settings) => {
+  const exportSRT = useCallback(async (filePath, settings) => {
     try {
-      const srtContent = await invoke('generate_srt', { subtitles, settings })
-      return srtContent
+      const srtContent = await invoke('generate_srt', { 
+        subtitles, 
+        settings: settings || undefined 
+      })
+      await writeTextFile(filePath, srtContent)
+      return filePath
     } catch (error) {
       console.error('Failed to export SRT:', error)
       return null

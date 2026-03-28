@@ -49,33 +49,34 @@ export function useStyling() {
     })
   }, [])
 
+  const previewTextStyle = useCallback(() => ({
+    fontFamily: style.font_family,
+    fontSize: `${style.font_size}px`,
+    color: style.font_color,
+    backgroundColor: style.background_color,
+    textShadow: style.shadow_blur > 0
+      ? `${style.shadow_offset_x}px ${style.shadow_offset_y}px ${style.shadow_blur}px ${style.shadow_color}`
+      : 'none',
+    border: style.border_width > 0
+      ? `${style.border_width}px solid ${style.border_color}`
+      : 'none',
+    borderRadius: `${style.border_radius}px`,
+    padding: `${style.line_spacing}px`,
+    textAlign: style.alignment,
+    fontWeight: style.bold ? 'bold' : 'normal',
+    fontStyle: style.italic ? 'italic' : 'normal',
+    textDecoration: style.underline ? 'underline' : 'none'
+  }), [style])
+
   const previewStyle = useCallback(() => {
-    const pos = style.position === 'bottom' 
-      ? { bottom: style.y_offset + 40 }
+    const pos = style.position === 'bottom'
+      ? { bottom: style.y_offset, left: '50%', transform: 'translateX(-50%)' }
       : style.position === 'top'
-      ? { top: style.y_offset + 40 }
-      : { top: '50%', marginTop: -style.font_size }
+        ? { top: style.y_offset, left: '50%', transform: 'translateX(-50%)' }
+        : { left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }
 
-    return {
-      fontFamily: style.font_family,
-      fontSize: `${style.font_size}px`,
-      color: style.font_color,
-      backgroundColor: style.background_color,
-      textShadow: style.shadow_blur > 0 
-        ? `${style.shadow_offset_x}px ${style.shadow_offset_y}px ${style.shadow_blur}px ${style.shadow_color}`
-        : 'none',
-      border: style.border_width > 0 
-        ? `${style.border_width}px solid ${style.border_color}`
-        : 'none',
-      borderRadius: `${style.border_radius}px`,
-      padding: `${style.line_spacing}px`,
-      textAlign: style.alignment,
-      fontWeight: style.bold ? 'bold' : 'normal',
-      fontStyle: style.italic ? 'italic' : 'normal',
-      textDecoration: style.underline ? 'underline' : 'none',
-      ...pos
-    }
-  }, [style])
+    return { ...previewTextStyle(), ...pos }
+  }, [style, previewTextStyle])
 
-  return { style, updateStyle, resetStyle, previewStyle }
+  return { style, updateStyle, resetStyle, previewStyle, previewTextStyle }
 }

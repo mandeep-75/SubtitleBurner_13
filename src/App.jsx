@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@tauri-apps/api/core'
 import Header from './components/Header'
@@ -38,20 +38,19 @@ function App() {
     videoInfo,
     videoRef,
     currentTime,
+    duration,
     isPlaying,
     isLoading,
     loadVideo,
     play,
     pause,
-    seek,
-    setVolume
+    seek
   } = useVideo()
 
   const {
     style,
     updateStyle,
-    resetStyle,
-    previewStyle
+    resetStyle
   } = useStyling()
 
   const handleImportVideo = useCallback(async () => {
@@ -80,6 +79,11 @@ function App() {
     }
   }, [importSubtitles])
 
+  const handleTranscribeComplete = useCallback(async (result) => {
+    setSubtitles(result.subtitles)
+    setTranscribing(false)
+  }, [setSubtitles])
+
   const handleTranscribe = useCallback(async (settings) => {
     if (!videoInfo?.path) return
     
@@ -91,18 +95,24 @@ function App() {
         videoPath: videoInfo.path,
         settings: settings || transcribeSettings
       })
-      setSubtitles(result.subtitles)
+      handleTranscribeComplete(result)
     } catch (e) {
       console.error('Transcription error:', e)
+      setTranscribing(false)
     }
-    
-    setTranscribing(false)
-  }, [videoInfo, setSubtitles, transcribeSettings])
+  }, [videoInfo, transcribeSettings, handleTranscribeComplete])
 
   const handleExport = useCallback(async () => {
     if (!videoInfo?.path || subtitles.length === 0) return
     setShowExport(true)
   }, [videoInfo, subtitles])
+
+  const handleGenerateSRT = useCallback(async () => {
+    if (!videoInfo?.path || subtitles.length === 0) return
+    exportSRT(videoInfo.path.replace(/\.[^/.]+$/, '') + '.srt')
+  }, [videoInfo, subtitles, exportSRT])
+
+
 
   return (
     <div className="app">
@@ -121,16 +131,18 @@ function App() {
       
       <div className="main-content">
         <VideoPanel
-          videoRef={videoRef}
           videoInfo={videoInfo}
+          videoRef={videoRef}
           currentTime={currentTime}
+          duration={duration}
           isPlaying={isPlaying}
+          isLoading={isLoading}
+          play={play}
+          pause={pause}
+          seek={seek}
           subtitles={subtitles}
-          style={previewStyle}
-          onPlay={play}
-          onPause={pause}
-          onSeek={seek}
-          onVolumeChange={setVolume}
+          style={style}
+          onGenerateSRT={handleGenerateSRT}
         />
         
         <SubtitleEditor
@@ -155,6 +167,8 @@ function App() {
       {showExport && (
         <ExportModal
           videoPath={videoInfo?.path || ''}
+          videoWidth={videoInfo?.width}
+          videoHeight={videoInfo?.height}
           subtitles={subtitles}
           style={style}
           transcribeSettings={transcribeSettings}
@@ -179,6 +193,7 @@ function App() {
           </div>
         </div>
       )}
+
     </div>
   )
 }

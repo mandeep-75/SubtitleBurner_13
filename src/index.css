@@ -166,9 +166,68 @@ body {
   opacity: 0.5;
 }
 
+.video-info-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-xl);
+  width: 100%;
+}
+
+.video-filename {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.video-filename svg {
+  opacity: 0.7;
+}
+
+.video-meta {
+  display: flex;
+  gap: var(--spacing-md);
+  color: var(--color-text-muted);
+  font-size: 14px;
+}
+
+.generate-buttons {
+  display: flex;
+  gap: var(--spacing-md);
+  margin-top: var(--spacing-md);
+}
+
+.preview-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: #000;
+}
+
+.preview-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.video-actions {
+  display: flex;
+  justify-content: center;
+  padding: var(--spacing-md);
+  background: var(--color-bg-secondary);
+  border-top: 1px solid var(--color-border);
+}
+
 .subtitle-overlay {
   position: absolute;
-  bottom: 60px;
+  bottom: 0;
   left: 50%;
   transform: translateX(-50%);
   padding: var(--spacing-sm) var(--spacing-md);
@@ -855,4 +914,27 @@ body {
 
 .slide-up {
   animation: slideUp var(--transition-normal);
+}
+
+.modal-preview {
+  max-width: 90vw;
+  max-height: 90vh;
+}
+
+.preview-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.preview-image {
+  max-width: 100%;
+  max-height: 70vh;
+  border-radius: var(--radius-md);
+}
+
+.preview-actions {
+  display: flex;
+  gap: var(--spacing-md);
 }

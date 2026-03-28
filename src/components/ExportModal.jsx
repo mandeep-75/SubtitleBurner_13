@@ -1,10 +1,8 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { save } from '@tauri-apps/plugin-dialog'
-import { writeTextFile } from '@tauri-apps/plugin-fs'
 
-function ExportModal({ videoPath, subtitles, style, transcribeSettings, onClose }) {
-  const [quality, setQuality] = useState('1080p')
+function ExportModal({ videoPath, videoWidth, videoHeight, subtitles, style, transcribeSettings, onClose }) {
   const [format, setFormat] = useState('mp4')
   const [exporting, setExporting] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -25,12 +23,14 @@ function ExportModal({ videoPath, subtitles, style, transcribeSettings, onClose 
       setProgress(10)
 
       const tempSubPath = outputPath + '.ass'
-      
+
       await invoke('generate_subtitle_file', {
         subtitles,
         style,
         outputPath: tempSubPath,
-        settings: transcribeSettings
+        settings: transcribeSettings,
+        videoWidth: videoWidth ?? null,
+        videoHeight: videoHeight ?? null
       })
 
       setProgress(40)
@@ -39,17 +39,18 @@ function ExportModal({ videoPath, subtitles, style, transcribeSettings, onClose 
         videoPath,
         subtitlePath: tempSubPath,
         outputPath,
-        quality,
-        reencode: true
+        reencode: true,
+        subtitles,
+        settings: transcribeSettings,
+        style
       })
 
       setProgress(100)
-      
+
       setTimeout(() => {
         setExporting(false)
         onClose()
       }, 500)
-
     } catch (error) {
       console.error('Export failed:', error)
       setExporting(false)
@@ -68,21 +69,11 @@ function ExportModal({ videoPath, subtitles, style, transcribeSettings, onClose 
             </svg>
           </button>
         </div>
-        
+
         <div className="modal-body">
-          <div style={{ marginBottom: '16px' }}>
-            <label className="label">Quality</label>
-            <select
-              className="select"
-              value={quality}
-              onChange={(e) => setQuality(e.target.value)}
-              disabled={exporting}
-            >
-              <option value="720p">720p (HD)</option>
-              <option value="1080p">1080p (Full HD)</option>
-              <option value="4k">4K (Ultra HD)</option>
-            </select>
-          </div>
+          <p style={{ marginBottom: 16, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+            Output keeps the source resolution and aspect ratio (subtitles scaled to match). Video is cropped by at most one pixel on odd-sized dimensions so encoders stay compatible.
+          </p>
 
           <div style={{ marginBottom: '16px' }}>
             <label className="label">Format</label>
@@ -103,9 +94,9 @@ function ExportModal({ videoPath, subtitles, style, transcribeSettings, onClose 
                 <div className="progress" style={{ width: `${progress}%` }} />
               </div>
               <span className="progress-text">
-                {progress < 40 ? 'Generating subtitles...' : 
-                 progress < 100 ? 'Burning subtitles into video...' : 
-                 'Complete!'}
+                {progress < 40 ? 'Generating subtitles...' :
+                  progress < 100 ? 'Burning subtitles into video...' :
+                    'Complete!'}
               </span>
             </div>
           )}
