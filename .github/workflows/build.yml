@@ -124,7 +124,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SubtitleBurner_windows
-          path: src-tauri/target/x86_64-pc-windows-gnu/release/bundle/
+          path: src-tauri/target/x86_64-pc-windows-gnu/release/
           retention-days: 5
 
   build-linux:
@@ -184,7 +184,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SubtitleBurner_linux
-          path: src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/
+          path: src-tauri/target/release/bundle/
           retention-days: 5
 
   release:
