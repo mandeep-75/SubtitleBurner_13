@@ -223,7 +223,7 @@ jobs:
             artifacts/**/*.dmg
             artifacts/**/*.AppImage
             artifacts/**/*.app
-            artifacts/**/subtitle-burner.exe
+            artifacts/**/subtitleburner.exe
           generate_release_notes: true
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') }}
         env:
