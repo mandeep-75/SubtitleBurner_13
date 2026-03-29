@@ -221,10 +221,9 @@ jobs:
         with:
           files: |
             artifacts/**/*.dmg
-            artifacts/**/*.msi
-            artifacts/**/*.exe
             artifacts/**/*.AppImage
             artifacts/**/*.app
+            artifacts/**/SubtitleBurner.exe
           generate_release_notes: true
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') }}
         env:
